@@ -1,0 +1,1330 @@
+name: Build APK
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+      - name: Create project files
+        run: |
+          mkdir -p PDD && cd PDD
+          mkdir -p "."
+          cat > 'README.md' <<'PDD_EOF_7'
+          # PRABHU DIVYA DARSHAN – Online Pooja (prototype v0.1.0)
+          Kotlin + Jetpack Compose, minSdk 26, offline, no login/backend.
+
+          Open this folder in Android Studio (Koala 2024.1+ / JDK 17) -> Sync -> Run.
+          Command line: `gradle wrapper --gradle-version 8.9` once, then `./gradlew assembleDebug`
+          APK: app/build/outputs/apk/debug/app-debug.apk
+
+          ## Where to add real content
+          - Aarti lyrics: app/src/main/assets/lyrics/<id>.txt (UTF-8 Devanagari), ids in data/Content.kt (a_ganpati, a_shiva ...)
+          - Deity images: replace the placeholder box in ui/PoojaScreen.kt with painterResource (licensed images only)
+          - Panchang: implement PanchangSource in data/PanchangSource.kt
+          - Horoscope / festival dates: data/Content.kt + ui/Screens2.kt
+          - Sanskrit/English: add to Lang enum and Bi fields
+
+          ## Audio
+          bell.wav, conch.wav, ambient.wav in res/raw are synthesized originals (no third-party material).
+          They are NOT authentic recordings; replace with licensed recordings when available.
+          PDD_EOF_7
+          mkdir -p "."
+          cat > 'build.gradle.kts' <<'PDD_EOF_7'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "2.0.20" apply false
+              id("org.jetbrains.kotlin.plugin.compose") version "2.0.20" apply false
+          }
+          PDD_EOF_7
+          mkdir -p "."
+          cat > 'gradle.properties' <<'PDD_EOF_7'
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.nonTransitiveRClass=true
+          kotlin.code.style=official
+          PDD_EOF_7
+          mkdir -p "."
+          cat > 'settings.gradle.kts' <<'PDD_EOF_7'
+          pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "PrabhuDivyaDarshan"
+          include(":app")
+          PDD_EOF_7
+          mkdir -p "app"
+          cat > 'app/build.gradle.kts' <<'PDD_EOF_7'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+              id("org.jetbrains.kotlin.plugin.compose")
+          }
+          android {
+              namespace = "com.prabhu.divyadarshan"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.prabhu.divyadarshan"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "0.1.0"
+              }
+              buildTypes { release { isMinifyEnabled = false } }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+              buildFeatures { compose = true }
+              packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+          }
+          dependencies {
+              implementation(platform("androidx.compose:compose-bom:2024.09.00"))
+              implementation("androidx.compose.ui:ui")
+              implementation("androidx.compose.ui:ui-tooling-preview")
+              implementation("androidx.compose.material3:material3")
+              implementation("androidx.compose.material:material-icons-core")
+              implementation("androidx.activity:activity-compose:1.9.2")
+              implementation("androidx.navigation:navigation-compose:2.8.0")
+              implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.5")
+              implementation("androidx.core:core-ktx:1.13.1")
+              debugImplementation("androidx.compose.ui:ui-tooling")
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main"
+          cat > 'app/src/main/AndroidManifest.xml' <<'PDD_EOF_7'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+              <application
+                  android:allowBackup="true"
+                  android:icon="@drawable/ic_launcher"
+                  android:label="@string/app_name"
+                  android:supportsRtl="true"
+                  android:theme="@style/Theme.App">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <receiver android:name=".reminder.ReminderReceiver" android:exported="false" />
+              </application>
+          </manifest>
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/MainActivity.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan
+
+          import android.os.Bundle
+          import androidx.activity.ComponentActivity
+          import androidx.activity.compose.setContent
+          import androidx.compose.runtime.CompositionLocalProvider
+          import androidx.compose.runtime.DisposableEffect
+          import androidx.compose.runtime.remember
+          import androidx.lifecycle.viewmodel.compose.viewModel
+          import com.prabhu.divyadarshan.audio.AudioController
+          import com.prabhu.divyadarshan.data.AppViewModel
+          import com.prabhu.divyadarshan.ui.AppRoot
+          import com.prabhu.divyadarshan.ui.AppTheme
+          import com.prabhu.divyadarshan.ui.LocalAudio
+
+          class MainActivity : ComponentActivity() {
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContent {
+                      val vm: AppViewModel = viewModel()
+                      val audio = remember { AudioController(applicationContext) }
+                      DisposableEffect(Unit) { onDispose { audio.release() } }
+                      AppTheme(vm.lang, vm.fontScale) {
+                          CompositionLocalProvider(LocalAudio provides audio) { AppRoot(vm) }
+                      }
+                  }
+              }
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan/ui"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/ui/AppRoot.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan.ui
+
+          import androidx.compose.foundation.layout.padding
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.automirrored.filled.List
+          import androidx.compose.material.icons.filled.Favorite
+          import androidx.compose.material.icons.filled.Home
+          import androidx.compose.material.icons.filled.Settings
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.Composable
+          import androidx.compose.runtime.getValue
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.vector.ImageVector
+          import androidx.navigation.compose.NavHost
+          import androidx.navigation.compose.composable
+          import androidx.navigation.compose.currentBackStackEntryAsState
+          import androidx.navigation.compose.rememberNavController
+          import com.prabhu.divyadarshan.data.AppViewModel
+
+          private data class Tab(val target: String, val pattern: String, val icon: ImageVector, val mr: String, val hi: String)
+
+          @Composable
+          fun AppRoot(vm: AppViewModel) {
+              val nav = rememberNavController()
+              val route = nav.currentBackStackEntryAsState().value?.destination?.route
+              val tabs = listOf(
+                  Tab("home", "home", Icons.Filled.Home, "मुख्य", "मुख्य"),
+                  Tab("library/all", "library/{filter}", Icons.AutoMirrored.Filled.List, "आरती/मंत्र", "आरती/मंत्र"),
+                  Tab("favorites", "favorites", Icons.Filled.Favorite, "आवडते", "पसंदीदा"),
+                  Tab("settings", "settings", Icons.Filled.Settings, "सेटिंग्ज", "सेटिंग्स")
+              )
+              val go = { r: String -> nav.navigate(r) }
+              val back = { nav.popBackStack(); Unit }
+              Scaffold(containerColor = Cream, bottomBar = {
+                  if (tabs.any { it.pattern == route }) NavigationBar(containerColor = Maroon) {
+                      tabs.forEach { t ->
+                          val label = tr(t.mr, t.hi)
+                          NavigationBarItem(
+                              selected = route == t.pattern,
+                              onClick = {
+                                  nav.navigate(t.target) {
+                                      popUpTo("home") { saveState = true }
+                                      launchSingleTop = true
+                                      restoreState = true
+                                  }
+                              },
+                              icon = { Icon(t.icon, contentDescription = label) },
+                              label = { Text(label) },
+                              colors = NavigationBarItemDefaults.colors(
+                                  selectedIconColor = Maroon, selectedTextColor = Gold, indicatorColor = Gold,
+                                  unselectedIconColor = Cream.copy(alpha = .75f), unselectedTextColor = Cream.copy(alpha = .75f)
+                              )
+                          )
+                      }
+                  }
+              }) { pad ->
+                  NavHost(nav, "home", Modifier.padding(pad)) {
+                      composable("home") { HomeScreen(go) }
+                      composable("library/{filter}") { LibraryScreen(it.arguments?.getString("filter") ?: "all", vm) { id -> go("item/$id") } }
+                      composable("favorites") { FavoritesScreen(vm) { id -> go("item/$id") } }
+                      composable("settings") { SettingsScreen(vm, go) }
+                      composable("deity/{id}") { DeityScreen(it.arguments?.getString("id") ?: "", vm, back, go) }
+                      composable("item/{id}") { ItemScreen(it.arguments?.getString("id") ?: "", vm, back, go) }
+                      composable("pooja/{id}") { PoojaScreen(it.arguments?.getString("id") ?: "ganpati", back) }
+                      composable("festivals") { FestivalsScreen(back, go) }
+                      composable("festival/{id}") { FestivalScreen(it.arguments?.getString("id") ?: "", back, go) }
+                      composable("panchang") { PanchangScreen(vm, back) }
+                      composable("horoscope") { HoroscopeScreen(back) }
+                      composable("reminder") { ReminderScreen(vm, back) }
+                  }
+              }
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan/ui"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/ui/PoojaScreen.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan.ui
+
+          import android.app.Activity
+          import androidx.activity.compose.BackHandler
+          import androidx.compose.animation.core.*
+          import androidx.compose.foundation.Canvas
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.border
+          import androidx.compose.foundation.clickable
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.shape.CircleShape
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.clip
+          import androidx.compose.ui.geometry.Offset
+          import androidx.compose.ui.graphics.Brush
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.graphics.StrokeCap
+          import androidx.compose.ui.graphics.graphicsLayer
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.platform.LocalView
+          import androidx.compose.ui.semantics.Role
+          import androidx.compose.ui.semantics.contentDescription
+          import androidx.compose.ui.semantics.semantics
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import androidx.core.view.WindowCompat
+          import androidx.core.view.WindowInsetsCompat
+          import androidx.core.view.WindowInsetsControllerCompat
+          import com.prabhu.divyadarshan.data.Content
+          import kotlinx.coroutines.launch
+          import kotlin.math.PI
+          import kotlin.math.cos
+          import kotlin.math.sin
+
+          @Composable
+          fun PoojaScreen(deityId: String, onBack: () -> Unit) {
+              val deity = Content.deity(deityId) ?: Content.deities.first()
+              val audio = LocalAudio.current
+              val scope = rememberCoroutineScope()
+              var aarti by remember { mutableStateOf(false) }
+              var incense by remember { mutableStateOf(false) }
+              var flowers by remember { mutableIntStateOf(0) }
+              var immersive by remember { mutableStateOf(false) }
+              val orbit = remember { Animatable(0f) }
+              val bellSwing = remember { Animatable(0f) }
+              val conchScale = remember { Animatable(1f) }
+
+              LaunchedEffect(aarti) {
+                  if (aarti) while (true) orbit.animateTo(orbit.value + 360f, tween(5000, easing = LinearEasing))
+              }
+
+              // Full-screen worship mode: hide system bars and keep the screen awake.
+              val view = LocalView.current
+              val activity = LocalContext.current as? Activity
+              DisposableEffect(immersive) {
+                  val window = activity?.window
+                  val ctrl = window?.let { WindowCompat.getInsetsController(it, view) }
+                  if (immersive) {
+                      ctrl?.hide(WindowInsetsCompat.Type.systemBars())
+                      ctrl?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                  }
+                  view.keepScreenOn = immersive
+                  onDispose {
+                      ctrl?.show(WindowInsetsCompat.Type.systemBars())
+                      view.keepScreenOn = false
+                  }
+              }
+              BackHandler(immersive) { immersive = false }
+
+              Column(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(DeepMaroon, Maroon)))) {
+                  if (!immersive) AppTopBar(tr("आभासी पूजा", "आभासी पूजा") + " – " + deity.name.t(), onBack)
+                  else Row(Modifier.fillMaxWidth().padding(8.dp), horizontalArrangement = Arrangement.End) {
+                      TextButton(onClick = { immersive = false }) { Text("✕ " + tr("बाहेर पडा", "बाहर निकलें"), color = Gold) }
+                  }
+                  Column(
+                      Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+                      horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)
+                  ) {
+                      // Scene
+                      Box(Modifier.size(280.dp), contentAlignment = Alignment.Center) {
+                          Box(
+                              Modifier.size(160.dp).clip(RoundedCornerShape(24.dp)).background(Color(0x33FFFFFF))
+                                  .border(3.dp, Gold, RoundedCornerShape(24.dp))
+                                  .semantics { contentDescription = deity.name.t() + " – " + tr("चित्र जागा", "चित्र स्थान") },
+                              contentAlignment = Alignment.Center
+                          ) {
+                              Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                  Text(deity.glyph, fontSize = 56.sp, color = Gold, fontWeight = FontWeight.Bold)
+                                  Text(tr("देवतेचे चित्र (जागा)", "देवता का चित्र (स्थान)"), color = Cream, fontSize = 11.sp, textAlign = TextAlign.Center)
+                              }
+                          }
+                          if (flowers > 0) Row(Modifier.offset(y = 62.dp)) { repeat(minOf(flowers, 7)) { Text("🌸", fontSize = 22.sp) } }
+                          Incense(incense, Modifier.align(Alignment.BottomStart))
+                          val a = (90.0 + orbit.value) * PI / 180.0
+                          Text("🪔", fontSize = 36.sp, modifier = Modifier.offset(x = (110 * cos(a)).dp, y = (110 * sin(a)).dp)
+                              .semantics { contentDescription = tr("दिवा", "दीपक") })
+                      }
+                      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                          RitualButton("🔔", tr("घंटा", "घंटी"), false, Modifier.graphicsLayer { rotationZ = bellSwing.value }) {
+                              audio.ring()
+                              scope.launch {
+                                  bellSwing.animateTo(18f, tween(90)); bellSwing.animateTo(-18f, tween(140))
+                                  bellSwing.animateTo(0f, spring(Spring.DampingRatioMediumBouncy))
+                              }
+                          }
+                          RitualButton("🐚", tr("शंख", "शंख"), false, Modifier.graphicsLayer { scaleX = conchScale.value; scaleY = conchScale.value }) {
+                              audio.blow()
+                              scope.launch { conchScale.animateTo(1.25f, tween(400)); conchScale.animateTo(1f, tween(900)) }
+                          }
+                          RitualButton("🪔", tr("आरती", "आरती"), aarti) { aarti = !aarti }
+                      }
+                      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                          RitualButton("🌸", tr("फुले", "फूल"), false) { flowers++ }
+                          RitualButton("🪵", tr("अगरबत्ती", "अगरबत्ती"), incense) { incense = !incense }
+                          RitualButton("⛶", tr("पूर्ण स्क्रीन", "फ़ुल स्क्रीन"), immersive) { immersive = !immersive }
+                      }
+                      if (!immersive) {
+                          AudioControls()
+                          Text(
+                              tr("देवतेच्या चित्राची जागा: परवानाधारक/स्वतःची प्रतिमा नंतर जोडा.", "देवता चित्र का स्थान: लाइसेंस प्राप्त/अपनी छवि बाद में जोड़ें।"),
+                              color = Cream.copy(alpha = .8f), fontSize = 12.sp, textAlign = TextAlign.Center
+                          )
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          private fun RitualButton(emoji: String, label: String, active: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+              Column(Modifier.width(96.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                  Box(
+                      modifier.size(60.dp).clip(CircleShape).background(if (active) Gold else Color(0x33FFFFFF))
+                          .border(1.5.dp, Gold, CircleShape)
+                          .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
+                          .semantics { contentDescription = label },
+                      contentAlignment = Alignment.Center
+                  ) { Text(emoji, fontSize = 28.sp) }
+                  Text(label, color = Cream, fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 2)
+              }
+          }
+
+          @Composable
+          private fun Incense(on: Boolean, modifier: Modifier) {
+              val t = rememberInfiniteTransition(label = "smoke")
+              val p by t.animateFloat(0f, 1f, infiniteRepeatable(tween(3000, easing = LinearEasing)), label = "p")
+              Canvas(modifier.size(40.dp, 90.dp).semantics { contentDescription = "Incense / अगरबत्ती" }) {
+                  val x = size.width / 2
+                  val top = size.height * 0.45f
+                  drawLine(Color(0xFF8B5A2B), Offset(x, size.height), Offset(x, top), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
+                  drawCircle(Color(0xFFFF5522), 3.dp.toPx(), Offset(x, top))
+                  if (on) for (i in 0..2) {
+                      val q = (p + i / 3f) % 1f
+                      drawCircle(Color.White.copy(alpha = (1f - q) * 0.5f), (4 + q * 10).dp.toPx(),
+                          Offset(x + sin(q * 6.28f + i) * 8.dp.toPx(), top - q * top))
+                  }
+              }
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan/ui"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/ui/Screens1.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan.ui
+
+          import androidx.compose.foundation.BorderStroke
+          import androidx.compose.foundation.background
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.LazyRow
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.shape.CircleShape
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.draw.clip
+          import androidx.compose.ui.graphics.Brush
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.platform.LocalContext
+          import androidx.compose.ui.text.font.FontFamily
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import com.prabhu.divyadarshan.data.AppViewModel
+          import com.prabhu.divyadarshan.data.Bi
+          import com.prabhu.divyadarshan.data.Content
+          import com.prabhu.divyadarshan.data.Deity
+          import java.time.LocalDate
+
+          private data class Quick(val emoji: String, val label: Bi, val route: String)
+
+          @Composable
+          fun HomeScreen(go: (String) -> Unit) {
+              val lang = LocalLang.current
+              val today = remember { LocalDate.now() }
+              val msg = Content.dailyMessages[today.dayOfYear % Content.dailyMessages.size]
+              val weekday = Content.weekdays[today.dayOfWeek.value - 1].get(lang)
+              val dateText = "$weekday, ${today.dayOfMonth} ${Content.months[today.monthValue - 1].get(lang)} ${today.year}"
+              val quick = listOf(
+                  Quick("🪔", Bi("दैनिक पूजा"), "pooja/ganpati"), Quick("🔔", Bi("आरती"), "library/aarti"),
+                  Quick("🎉", Bi("सण", "त्योहार"), "festivals"), Quick("📅", Bi("पंचांग"), "panchang"),
+                  Quick("🕉", Bi("मंत्र"), "library/mantra"), Quick("♈", Bi("राशीभविष्य", "राशिफल"), "horoscope")
+              )
+              Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                  Column(
+                      Modifier.fillMaxWidth().background(Brush.verticalGradient(listOf(Maroon, Color(0xFF9A3412)))).padding(20.dp),
+                      horizontalAlignment = Alignment.CenterHorizontally
+                  ) {
+                      Text("ॐ", fontSize = 44.sp, color = Gold)
+                      Text("PRABHU DIVYA DARSHAN", color = Gold, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
+                      Text(tr("ऑनलाइन पूजा", "ऑनलाइन पूजा"), color = Cream)
+                      Spacer(Modifier.height(10.dp))
+                      Text("📅 $dateText", color = Cream, fontWeight = FontWeight.Medium)
+                      Spacer(Modifier.height(12.dp))
+                      Card(colors = CardDefaults.cardColors(containerColor = Cream), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
+                          Column(Modifier.padding(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                              Text(tr("आजचा भक्तिसंदेश", "आज का भक्ति संदेश"), color = Saffron, fontWeight = FontWeight.Bold)
+                              Text(msg.t(), textAlign = TextAlign.Center, color = Maroon, fontFamily = FontFamily.Serif, fontSize = 17.sp)
+                          }
+                      }
+                  }
+                  Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                      Text(tr("झटपट प्रवेश", "त्वरित पहुँच"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Maroon)
+                      Grid(quick, 3) { q ->
+                          Card(onClick = { go(q.route) }, shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Color.White),
+                              border = BorderStroke(1.dp, Gold), modifier = Modifier.fillMaxWidth()) {
+                              Column(Modifier.padding(vertical = 12.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                                  Text(q.emoji, fontSize = 28.sp)
+                                  Text(q.label.t(), fontSize = 13.sp, textAlign = TextAlign.Center, color = Maroon, fontWeight = FontWeight.Medium)
+                              }
+                          }
+                      }
+                      Text(tr("आपले इष्टदेव", "आपके इष्टदेव"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Maroon)
+                      Grid(Content.deities, 2) { d -> DeityCard(d) { go("deity/${d.id}") } }
+                      OutlinedButton(onClick = { go("reminder") }, Modifier.fillMaxWidth()) { Text("⏰ " + tr("दैनिक पूजा स्मरणपत्र", "दैनिक पूजा अनुस्मारक")) }
+                  }
+              }
+          }
+
+          @Composable
+          private fun DeityCard(d: Deity, onClick: () -> Unit) {
+              Card(onClick = onClick, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEFD0)),
+                  border = BorderStroke(1.dp, Saffron), modifier = Modifier.fillMaxWidth()) {
+                  Column(Modifier.padding(14.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                      Box(Modifier.size(56.dp).clip(CircleShape).background(Maroon), contentAlignment = Alignment.Center) {
+                          Text(d.glyph, color = Gold, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                      }
+                      Spacer(Modifier.height(6.dp))
+                      Text(d.name.t(), fontWeight = FontWeight.Bold, color = Maroon, textAlign = TextAlign.Center, fontFamily = FontFamily.Serif)
+                      Text(d.tagline.t(), style = MaterialTheme.typography.bodySmall)
+                  }
+              }
+          }
+
+          @Composable
+          fun DeityScreen(id: String, vm: AppViewModel, onBack: () -> Unit, go: (String) -> Unit) {
+              val d = Content.deity(id)
+              Column(Modifier.fillMaxSize()) {
+                  AppTopBar(d?.name?.t() ?: "", onBack)
+                  if (d == null) { EmptyState("🙏", tr("देवता सापडली नाही", "देवता नहीं मिले"), ""); return@Column }
+                  LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                      item {
+                          Button(onClick = { go("pooja/${d.id}") }, Modifier.fillMaxWidth().height(56.dp)) {
+                              Text("🪔 " + tr("आभासी पूजा सुरू करा", "आभासी पूजा शुरू करें"), fontSize = 17.sp)
+                          }
+                      }
+                      items(Content.items.filter { it.deityId == id }) { it ->
+                          ItemRow(it, it.id in vm.favorites, { vm.toggleFavorite(it.id) }) { go("item/${it.id}") }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun LibraryScreen(initial: String, vm: AppViewModel, open: (String) -> Unit) {
+              var type by remember(initial) { mutableStateOf(initial) }
+              var deity by remember { mutableStateOf<String?>(null) }
+              val list = Content.items.filter { (deity == null || it.deityId == deity) && (type == "all" || (type == "aarti") == it.isAarti) }
+              Column(Modifier.fillMaxSize()) {
+                  AppTopBar(tr("आरती आणि मंत्र", "आरती और मंत्र"))
+                  LazyRow(contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                      item { FilterChip(type == "all", { type = "all" }, { Text(tr("सर्व", "सभी")) }) }
+                      item { FilterChip(type == "aarti", { type = "aarti" }, { Text(tr("आरती", "आरती")) }) }
+                      item { FilterChip(type == "mantra", { type = "mantra" }, { Text(tr("मंत्र", "मंत्र")) }) }
+                  }
+                  LazyRow(contentPadding = PaddingValues(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                      item { FilterChip(deity == null, { deity = null }, { Text(tr("सर्व देव", "सभी देव")) }) }
+                      items(Content.deities) { d -> FilterChip(deity == d.id, { deity = d.id }, { Text(d.name.t()) }) }
+                  }
+                  if (list.isEmpty()) EmptyState("🪷", tr("येथे काहीही नाही", "यहाँ कुछ नहीं है"), tr("फिल्टर बदलून पहा.", "फ़िल्टर बदलकर देखें।"))
+                  else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                      items(list) { it -> ItemRow(it, it.id in vm.favorites, { vm.toggleFavorite(it.id) }) { open(it.id) } }
+                  }
+              }
+          }
+
+          @Composable
+          fun FavoritesScreen(vm: AppViewModel, open: (String) -> Unit) {
+              val favs = Content.items.filter { it.id in vm.favorites }
+              Column(Modifier.fillMaxSize()) {
+                  AppTopBar(tr("आवडते", "पसंदीदा"))
+                  if (favs.isEmpty()) EmptyState("💛", tr("अजून आवडते नाही", "अभी कोई पसंदीदा नहीं"),
+                      tr("आरती/मंत्रावरील ♡ दाबून येथे जतन करा.", "आरती/मंत्र पर ♡ दबाकर यहाँ सहेजें।"))
+                  else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                      items(favs) { it -> ItemRow(it, true, { vm.toggleFavorite(it.id) }) { open(it.id) } }
+                  }
+              }
+          }
+
+          @Composable
+          fun ItemScreen(id: String, vm: AppViewModel, onBack: () -> Unit, go: (String) -> Unit) {
+              val item = Content.item(id)
+              val ctx = LocalContext.current
+              val lyrics = remember(id) { runCatching { ctx.assets.open("lyrics/$id.txt").bufferedReader().use { it.readText() } }.getOrNull() }
+              Column(Modifier.fillMaxSize()) {
+                  AppTopBar(item?.title?.t() ?: "", onBack)
+                  if (item == null) { EmptyState("🙏", tr("सामग्री सापडली नाही", "सामग्री नहीं मिली"), ""); return@Column }
+                  Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                      ItemRow(item, item.id in vm.favorites, { vm.toggleFavorite(item.id) }) {}
+                      if (lyrics != null) {
+                          Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Gold)) {
+                              Text(lyrics.trim(), Modifier.padding(20.dp).fillMaxWidth(), fontSize = 24.sp, lineHeight = 38.sp,
+                                  textAlign = TextAlign.Center, color = Maroon, fontFamily = FontFamily.Serif)
+                          }
+                      } else {
+                          EmptyState("📜", tr("सत्यापित शब्द अजून जोडलेले नाहीत", "सत्यापित बोल अभी नहीं जोड़े गए"),
+                              tr("खऱ्या शब्दांचा स्रोत मिळाल्यावर assets/lyrics/${item.id}.txt फाइल जोडा. शब्द कल्पनेने लिहिलेले नाहीत.",
+                                  "प्रामाणिक बोल मिलने पर assets/lyrics/${item.id}.txt फ़ाइल जोड़ें। बोल अपनी ओर से नहीं गढ़े गए हैं।"))
+                      }
+                      AudioControls()
+                      OutlinedButton(onClick = { go("pooja/${item.deityId}") }, Modifier.fillMaxWidth()) { Text("🪔 " + tr("आभासी पूजा", "आभासी पूजा")) }
+                  }
+              }
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan/ui"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/ui/Screens2.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan.ui
+
+          import android.Manifest
+          import android.os.Build
+          import androidx.activity.compose.rememberLauncherForActivityResult
+          import androidx.activity.result.contract.ActivityResultContracts
+          import androidx.compose.foundation.BorderStroke
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.lazy.LazyColumn
+          import androidx.compose.foundation.lazy.items
+          import androidx.compose.foundation.rememberScrollState
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.foundation.verticalScroll
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.semantics.contentDescription
+          import androidx.compose.ui.semantics.semantics
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import com.prabhu.divyadarshan.data.*
+          import java.time.LocalDate
+
+          @Composable
+          fun FestivalsScreen(onBack: () -> Unit, go: (String) -> Unit) {
+              Column(Modifier.fillMaxSize()) {
+                  AppTopBar(tr("सण आणि विशेष पूजा", "त्योहार और विशेष पूजा"), onBack)
+                  LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                      item { SampleBanner(tr("तारखा जोडलेल्या नाहीत – सत्यापित दिनदर्शिका जोडेपर्यंत.", "तिथियाँ जुड़ी नहीं हैं – सत्यापित कैलेंडर जुड़ने तक।")) }
+                      items(Content.festivals) { f ->
+                          Card(onClick = { go("festival/${f.id}") }, Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                              colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Gold)) {
+                              Column(Modifier.padding(16.dp)) {
+                                  Text(f.name.t(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Maroon)
+                                  Text(f.significance.t(), style = MaterialTheme.typography.bodyMedium, maxLines = 2)
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun FestivalScreen(id: String, onBack: () -> Unit, go: (String) -> Unit) {
+              val f = Content.festival(id)
+              Column(Modifier.fillMaxSize()) {
+                  AppTopBar(f?.name?.t() ?: "", onBack)
+                  if (f == null) { EmptyState("🙏", tr("सण सापडला नाही", "त्योहार नहीं मिला"), ""); return@Column }
+                  Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                      SampleBanner(tr("तारीख: निश्चित नाही – सत्यापित दिनदर्शिका जोडली जाईल.", "तिथि: निर्धारित नहीं – सत्यापित कैलेंडर जोड़ा जाएगा।"))
+                      Text(tr("महत्त्व", "महत्व"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Maroon)
+                      Text(f.significance.t(), style = MaterialTheme.typography.bodyLarge)
+                      Text(tr("पूजा विधी (टप्प्याटप्प्याने)", "पूजा विधि (चरण-दर-चरण)"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Maroon)
+                      Content.commonSteps.forEachIndexed { i, (title, body) ->
+                          Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Gold.copy(alpha = .5f))) {
+                              Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                  Text("${i + 1}", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Saffron)
+                                  Column { Text(title.t(), fontWeight = FontWeight.Bold); Text(body.t()) }
+                              }
+                          }
+                      }
+                      Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEFD0))) {
+                          Column(Modifier.padding(12.dp)) {
+                              Text("✨ " + tr("विशेष", "विशेष"), fontWeight = FontWeight.Bold, color = Maroon)
+                              Text(f.special.t())
+                          }
+                      }
+                      Text(tr("परंपरा प्रदेश व कुटुंबानुसार बदलू शकतात; स्थानिक पुरोहितांचा सल्ला घ्या.", "परंपराएँ क्षेत्र व परिवार के अनुसार भिन्न हो सकती हैं; स्थानीय पुरोहित से परामर्श लें।"),
+                          style = MaterialTheme.typography.bodySmall)
+                      f.deityId?.let { d -> Button(onClick = { go("pooja/$d") }, Modifier.fillMaxWidth()) { Text("🪔 " + tr("आभासी पूजा", "आभासी पूजा")) } }
+                  }
+              }
+          }
+
+          @Composable
+          fun PanchangScreen(vm: AppViewModel, onBack: () -> Unit) {
+              val lang = LocalLang.current
+              var date by remember { mutableStateOf(LocalDate.now()) }
+              var menu by remember { mutableStateOf(false) }
+              val data = SamplePanchangSource.forDate(date, vm.city)
+              val fields = listOf(
+                  Bi("तिथी", "तिथि") to data.tithi, Bi("नक्षत्र") to data.nakshatra, Bi("योग") to data.yoga,
+                  Bi("करण") to data.karana, Bi("सूर्योदय") to data.sunrise, Bi("सूर्यास्त") to data.sunset
+              )
+              Column(Modifier.fillMaxSize()) {
+                  AppTopBar(tr("पंचांग", "पंचांग"), onBack)
+                  Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                      SampleBanner(tr("नमुना स्क्रीन: विश्वसनीय पंचांग गणना स्रोत जोडलेला नाही, म्हणून मूल्ये दाखवलेली नाहीत.",
+                          "नमूना स्क्रीन: विश्वसनीय पंचांग गणना स्रोत जुड़ा नहीं है, इसलिए मान नहीं दिखाए गए हैं।"))
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                          TextButton(onClick = { date = date.minusDays(1) }, modifier = Modifier.semantics { contentDescription = "Previous day" }) { Text("◀") }
+                          Text("${Content.weekdays[date.dayOfWeek.value - 1].get(lang)}\n${date.dayOfMonth} ${Content.months[date.monthValue - 1].get(lang)} ${date.year}",
+                              Modifier.weight(1f), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold, color = Maroon)
+                          TextButton(onClick = { date = date.plusDays(1) }, modifier = Modifier.semantics { contentDescription = "Next day" }) { Text("▶") }
+                      }
+                      Box {
+                          OutlinedButton(onClick = { menu = true }, Modifier.fillMaxWidth()) { Text("📍 ${tr("स्थान", "स्थान")}: ${vm.city} ▾") }
+                          DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                              Content.cities.forEach { c -> DropdownMenuItem(text = { Text(c) }, onClick = { vm.setCity(c); menu = false }) }
+                          }
+                      }
+                      Grid(fields, 2) { (label, value) ->
+                          Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Gold)) {
+                              Column(Modifier.padding(12.dp)) {
+                                  Text(label.t(), color = Saffron, fontWeight = FontWeight.Bold)
+                                  Text(value ?: "—", style = MaterialTheme.typography.titleMedium, color = Maroon)
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun HoroscopeScreen(onBack: () -> Unit) {
+              var sel by remember { mutableIntStateOf(0) }
+              val z = Content.zodiac[sel]
+              Column(Modifier.fillMaxSize()) {
+                  AppTopBar(tr("राशीभविष्य", "राशिफल"), onBack)
+                  Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                      Grid(Content.zodiac.withIndex().toList(), 3) { (i, s) ->
+                          FilterChip(sel == i, { sel = i }, { Text("${s.symbol} ${s.name.t()}", maxLines = 1) }, Modifier.fillMaxWidth())
+                      }
+                      SampleBanner(tr("नमुना मजकूर – सत्यापित भविष्य अजून जोडलेले नाही.", "नमूना पाठ – सत्यापित राशिफल अभी जोड़ा नहीं गया है।"))
+                      Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Gold)) {
+                          Column(Modifier.padding(16.dp)) {
+                              Text("${z.symbol} ${z.name.t()}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = Maroon)
+                              Spacer(Modifier.height(6.dp))
+                              Text(tr("या राशीसाठी सत्यापित भविष्यकथन येथे दाखवले जाईल.", "इस राशि के लिए सत्यापित राशिफल यहाँ दिखाया जाएगा।"))
+                          }
+                      }
+                      Text(tr("ज्योतिष ही पारंपरिक मार्गदर्शनाची पद्धत आहे; ती निश्चित भविष्यवाणी नाही.", "ज्योतिष पारंपरिक मार्गदर्शन की पद्धति है; यह निश्चित भविष्यवाणी नहीं है।"),
+                          style = MaterialTheme.typography.bodySmall)
+                  }
+              }
+          }
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun ReminderScreen(vm: AppViewModel, onBack: () -> Unit) {
+              var show by remember { mutableStateOf(false) }
+              val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+              val label = tr("दैनिक पूजा स्मरणपत्र", "दैनिक पूजा अनुस्मारक")
+              Column(Modifier.fillMaxSize()) {
+                  AppTopBar(label, onBack)
+                  Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                          Text(label, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                          Switch(vm.remindOn, { on ->
+                              if (on && Build.VERSION.SDK_INT >= 33) launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                              vm.setReminder(on, vm.remindHour, vm.remindMinute)
+                          }, Modifier.semantics { contentDescription = label })
+                      }
+                      OutlinedButton(onClick = { show = true }, Modifier.fillMaxWidth().height(56.dp)) {
+                          Text("⏰  %02d:%02d".format(vm.remindHour, vm.remindMinute), fontSize = 22.sp)
+                      }
+                      Text(tr("वेळ जवळपासची असू शकते (बॅटरी बचतीमुळे). सूचना परवानगी आवश्यक.", "समय थोड़ा आगे-पीछे हो सकता है (बैटरी बचत के कारण)। सूचना अनुमति आवश्यक।"),
+                          style = MaterialTheme.typography.bodySmall)
+                  }
+              }
+              if (show) {
+                  val st = rememberTimePickerState(vm.remindHour, vm.remindMinute, true)
+                  AlertDialog(
+                      onDismissRequest = { show = false },
+                      confirmButton = { TextButton(onClick = { vm.setReminder(vm.remindOn, st.hour, st.minute); show = false }) { Text("OK") } },
+                      dismissButton = { TextButton(onClick = { show = false }) { Text(tr("रद्द", "रद्द")) } },
+                      text = { TimePicker(state = st) }
+                  )
+              }
+          }
+
+          @Composable
+          fun SettingsScreen(vm: AppViewModel, go: (String) -> Unit) {
+              Column(Modifier.fillMaxSize()) {
+                  AppTopBar(tr("सेटिंग्ज", "सेटिंग्स"))
+                  Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                      Text(tr("भाषा", "भाषा"), fontWeight = FontWeight.Bold, color = Maroon)
+                      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                          Lang.values().forEach { l -> FilterChip(vm.lang == l, { vm.setLang(l) }, { Text(l.label) }) }
+                      }
+                      Text(tr("संस्कृत व इंग्रजी लवकरच.", "संस्कृत व अंग्रेज़ी जल्द ही।"), style = MaterialTheme.typography.bodySmall)
+                      Text(tr("अक्षरांचा आकार", "अक्षर आकार"), fontWeight = FontWeight.Bold, color = Maroon)
+                      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                          listOf(0.9f to tr("लहान", "छोटा"), 1f to tr("मध्यम", "मध्यम"), 1.25f to tr("मोठा", "बड़ा")).forEach { (s, n) ->
+                              FilterChip(vm.fontScale == s, { vm.setFontScale(s) }, { Text(n) })
+                          }
+                      }
+                      OutlinedButton(onClick = { go("reminder") }, Modifier.fillMaxWidth()) { Text("⏰ " + tr("दैनिक पूजा स्मरणपत्र", "दैनिक पूजा अनुस्मारक")) }
+                      HorizontalDivider()
+                      Text(tr("माहिती", "जानकारी"), fontWeight = FontWeight.Bold, color = Maroon)
+                      Text(tr(
+                          "आवृत्ती 0.1.0 (प्रोटोटाइप). घंटा, शंख व शांत सूर हे या अ‍ॅपसाठी बनवलेले मूळ कृत्रिम आवाज आहेत. पंचांग व राशीभविष्य नमुना आहे; आरतीचे शब्द सत्यापित स्रोतातून जोडायचे आहेत. सर्व माहिती फक्त या फोनवर साठवली जाते.",
+                          "संस्करण 0.1.0 (प्रोटोटाइप)। घंटा, शंख और शांत स्वर इस ऐप के लिए बनाई गई मौलिक कृत्रिम ध्वनियाँ हैं। पंचांग व राशिफल नमूना है; आरती के बोल सत्यापित स्रोत से जोड़े जाने हैं। सारा डेटा केवल इसी फ़ोन में सहेजा जाता है।"),
+                          style = MaterialTheme.typography.bodyMedium)
+                  }
+              }
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan/ui"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/ui/Theme.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan.ui
+
+          import androidx.compose.foundation.BorderStroke
+          import androidx.compose.foundation.layout.*
+          import androidx.compose.foundation.shape.RoundedCornerShape
+          import androidx.compose.material.icons.Icons
+          import androidx.compose.material.icons.automirrored.filled.ArrowBack
+          import androidx.compose.material.icons.filled.Favorite
+          import androidx.compose.material.icons.filled.FavoriteBorder
+          import androidx.compose.material3.*
+          import androidx.compose.runtime.*
+          import androidx.compose.ui.Alignment
+          import androidx.compose.ui.Modifier
+          import androidx.compose.ui.graphics.Color
+          import androidx.compose.ui.semantics.contentDescription
+          import androidx.compose.ui.semantics.semantics
+          import androidx.compose.ui.text.font.FontFamily
+          import androidx.compose.ui.text.font.FontWeight
+          import androidx.compose.ui.text.style.TextAlign
+          import androidx.compose.ui.text.style.TextOverflow
+          import androidx.compose.ui.platform.LocalDensity
+          import androidx.compose.ui.unit.Density
+          import androidx.compose.ui.unit.dp
+          import androidx.compose.ui.unit.sp
+          import com.prabhu.divyadarshan.audio.AudioController
+          import com.prabhu.divyadarshan.data.Bi
+          import com.prabhu.divyadarshan.data.Content
+          import com.prabhu.divyadarshan.data.Item
+          import com.prabhu.divyadarshan.data.Lang
+
+          val Saffron = Color(0xFFFF9933)
+          val Maroon = Color(0xFF6D1A1A)
+          val DeepMaroon = Color(0xFF3F0D0D)
+          val Gold = Color(0xFFD4AF37)
+          val Cream = Color(0xFFFFF8E7)
+
+          val LocalLang = staticCompositionLocalOf { Lang.MR }
+          val LocalAudio = staticCompositionLocalOf<AudioController> { error("AudioController not provided") }
+
+          @Composable fun tr(mr: String, hi: String) = if (LocalLang.current == Lang.MR) mr else hi
+          @Composable fun Bi.t() = get(LocalLang.current)
+
+          @Composable
+          fun AppTheme(lang: Lang, fontScale: Float, content: @Composable () -> Unit) {
+              val d = LocalDensity.current
+              CompositionLocalProvider(
+                  LocalLang provides lang,
+                  LocalDensity provides Density(d.density, d.fontScale * fontScale)
+              ) {
+                  MaterialTheme(
+                      colorScheme = lightColorScheme(
+                          primary = Maroon, onPrimary = Cream, secondary = Saffron, onSecondary = Color.White,
+                          tertiary = Gold, background = Cream, onBackground = Color(0xFF2B1410),
+                          surface = Color(0xFFFFFDF5), onSurface = Color(0xFF2B1410),
+                          primaryContainer = Color(0xFFFFE2B8), onPrimaryContainer = Maroon,
+                          surfaceVariant = Color(0xFFFFEFD0)
+                      ),
+                      content = content
+                  )
+              }
+          }
+
+          @OptIn(ExperimentalMaterial3Api::class)
+          @Composable
+          fun AppTopBar(title: String, onBack: (() -> Unit)? = null) {
+              TopAppBar(
+                  title = { Text(title, fontFamily = FontFamily.Serif, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                  navigationIcon = {
+                      if (onBack != null) IconButton(onClick = onBack) {
+                          Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = tr("मागे", "पीछे"))
+                      }
+                  },
+                  colors = TopAppBarDefaults.topAppBarColors(containerColor = Maroon, titleContentColor = Cream, navigationIconContentColor = Gold)
+              )
+          }
+
+          @Composable
+          fun EmptyState(emoji: String, title: String, body: String, modifier: Modifier = Modifier) {
+              Column(modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                  Text(emoji, fontSize = 48.sp)
+                  Spacer(Modifier.height(8.dp))
+                  Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                  Spacer(Modifier.height(4.dp))
+                  Text(body, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
+              }
+          }
+
+          @Composable
+          fun SampleBanner(text: String) {
+              Card(
+                  colors = CardDefaults.cardColors(containerColor = Color(0xFFFFE9B0)),
+                  border = BorderStroke(1.dp, Saffron), modifier = Modifier.fillMaxWidth()
+              ) { Text("⚠ $text", Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium, color = Maroon) }
+          }
+
+          @Composable
+          fun <T> Grid(items: List<T>, cols: Int, content: @Composable (T) -> Unit) {
+              Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                  items.chunked(cols).forEach { row ->
+                      Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                          row.forEach { Box(Modifier.weight(1f)) { content(it) } }
+                          repeat(cols - row.size) { Spacer(Modifier.weight(1f)) }
+                      }
+                  }
+              }
+          }
+
+          @Composable
+          fun AudioControls(modifier: Modifier = Modifier) {
+              val a = LocalAudio.current
+              val vol = tr("आवाज", "आवाज़")
+              Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFEFD0)), modifier = modifier.fillMaxWidth()) {
+                  Column(Modifier.padding(12.dp)) {
+                      Text(tr("ध्वनी नियंत्रण (नमुना शांत सूर)", "ध्वनि नियंत्रण (नमूना शांत स्वर)"), fontWeight = FontWeight.Bold)
+                      Spacer(Modifier.height(8.dp))
+                      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                          Button(onClick = { a.play() }, Modifier.weight(1f).semantics { contentDescription = "Play / चालू" }, contentPadding = PaddingValues(4.dp)) { Text("▶") }
+                          Button(onClick = { a.pause() }, Modifier.weight(1f).semantics { contentDescription = "Pause / थांबवा" }, contentPadding = PaddingValues(4.dp)) { Text("⏸") }
+                          Button(onClick = { a.replay() }, Modifier.weight(1f).semantics { contentDescription = "Replay / पुन्हा" }, contentPadding = PaddingValues(4.dp)) { Text("↺") }
+                      }
+                      Row(verticalAlignment = Alignment.CenterVertically) {
+                          Text("🔈")
+                          Slider(a.volume, { a.setVol(it) }, Modifier.weight(1f).semantics { contentDescription = vol })
+                          Text("🔊")
+                      }
+                      Text(
+                          tr("हा संश्लेषित (कृत्रिम) नमुना सूर आहे; खऱ्या आरती/मंत्राचे ध्वनिमुद्रण नाही.",
+                              "यह संश्लेषित (कृत्रिम) नमूना स्वर है; वास्तविक आरती/मंत्र की रिकॉर्डिंग नहीं है।"),
+                          style = MaterialTheme.typography.bodySmall
+                      )
+                  }
+              }
+          }
+
+          @Composable
+          fun ItemRow(item: Item, fav: Boolean, onFav: () -> Unit, onClick: () -> Unit) {
+              val deity = Content.deity(item.deityId)
+              Card(onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                  colors = CardDefaults.cardColors(containerColor = Color.White), border = BorderStroke(1.dp, Gold.copy(alpha = .5f))) {
+                  Row(Modifier.padding(start = 16.dp, top = 8.dp, bottom = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                      Column(Modifier.weight(1f)) {
+                          Text(item.title.t(), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = Maroon)
+                          val type = if (item.isAarti) tr("आरती", "आरती") else tr("मंत्र", "मंत्र")
+                          val fest = Content.festivalName(item.festivalId)?.t()
+                          Text(listOfNotNull(deity?.name?.t(), type, fest).joinToString(" • "), style = MaterialTheme.typography.bodySmall)
+                      }
+                      IconButton(onClick = onFav) {
+                          Icon(
+                              if (fav) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                              contentDescription = if (fav) tr("आवडत्यातून काढा", "पसंदीदा से हटाएँ") else tr("आवडत्यात जोडा", "पसंदीदा में जोड़ें"),
+                              tint = if (fav) Saffron else Maroon
+                          )
+                      }
+                  }
+              }
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan/reminder"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/reminder/Reminder.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan.reminder
+
+          import android.Manifest
+          import android.annotation.SuppressLint
+          import android.app.AlarmManager
+          import android.app.NotificationChannel
+          import android.app.NotificationManager
+          import android.app.PendingIntent
+          import android.content.BroadcastReceiver
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.PackageManager
+          import android.os.Build
+          import androidx.core.app.NotificationCompat
+          import androidx.core.app.NotificationManagerCompat
+          import com.prabhu.divyadarshan.MainActivity
+          import com.prabhu.divyadarshan.R
+          import java.util.Calendar
+
+          object ReminderScheduler {
+              private fun pi(ctx: Context) = PendingIntent.getBroadcast(
+                  ctx, 1, Intent(ctx, ReminderReceiver::class.java),
+                  PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+              )
+
+              /** Inexact daily alarm: needs no special exact-alarm permission. */
+              fun schedule(ctx: Context, hour: Int, minute: Int) {
+                  val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                  val cal = Calendar.getInstance().apply {
+                      set(Calendar.HOUR_OF_DAY, hour); set(Calendar.MINUTE, minute); set(Calendar.SECOND, 0)
+                      if (timeInMillis <= System.currentTimeMillis()) add(Calendar.DAY_OF_YEAR, 1)
+                  }
+                  am.setInexactRepeating(AlarmManager.RTC_WAKEUP, cal.timeInMillis, AlarmManager.INTERVAL_DAY, pi(ctx))
+              }
+
+              fun cancel(ctx: Context) {
+                  (ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager).cancel(pi(ctx))
+              }
+          }
+
+          class ReminderReceiver : BroadcastReceiver() {
+              @SuppressLint("MissingPermission")
+              override fun onReceive(c: Context, i: Intent?) {
+                  if (Build.VERSION.SDK_INT >= 33 &&
+                      c.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+                  ) return
+                  val ch = "daily_pooja"
+                  c.getSystemService(NotificationManager::class.java)
+                      .createNotificationChannel(NotificationChannel(ch, "Daily Pooja", NotificationManager.IMPORTANCE_DEFAULT))
+                  val hi = c.getSharedPreferences("prefs", Context.MODE_PRIVATE).getString("lang", "MR") == "HI"
+                  val open = PendingIntent.getActivity(
+                      c, 0, Intent(c, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE
+                  )
+                  val n = NotificationCompat.Builder(c, ch)
+                      .setSmallIcon(R.drawable.ic_notif)
+                      .setContentTitle("PRABHU DIVYA DARSHAN")
+                      .setContentText(if (hi) "पूजा का समय हो गया है 🙏" else "पूजेची वेळ झाली आहे 🙏")
+                      .setContentIntent(open).setAutoCancel(true).build()
+                  NotificationManagerCompat.from(c).notify(1, n)
+              }
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan/audio"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/audio/AudioController.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan.audio
+
+          import android.content.Context
+          import android.media.AudioAttributes
+          import android.media.MediaPlayer
+          import android.media.SoundPool
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableFloatStateOf
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.setValue
+          import com.prabhu.divyadarshan.R
+
+          /** Bell + conch via SoundPool; looping ambient tone via MediaPlayer. All assets are synthesized originals. */
+          class AudioController(private val ctx: Context) {
+              private val pool = SoundPool.Builder().setMaxStreams(4).setAudioAttributes(
+                  AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
+                      .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
+              ).build()
+              private val bell = pool.load(ctx, R.raw.bell, 1)
+              private val conch = pool.load(ctx, R.raw.conch, 1)
+              private var player: MediaPlayer? = null
+
+              var volume by mutableFloatStateOf(0.7f)
+                  private set
+              var playing by mutableStateOf(false)
+                  private set
+
+              fun ring() { pool.play(bell, volume, volume, 1, 0, 1f) }
+              fun blow() { pool.play(conch, volume, volume, 1, 0, 1f) }
+
+              private fun ensure(): MediaPlayer? = player ?: MediaPlayer.create(ctx, R.raw.ambient)?.also {
+                  it.isLooping = true
+                  it.setVolume(volume, volume)
+                  player = it
+              }
+
+              fun play() { ensure()?.start(); playing = true }
+              fun pause() { player?.pause(); playing = false }
+              fun replay() { ensure()?.let { it.seekTo(0); it.start() }; playing = true }
+              fun setVol(v: Float) { volume = v; player?.setVolume(v, v) }
+
+              fun release() {
+                  pool.release(); player?.release(); player = null; playing = false
+              }
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan/data"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/data/AppViewModel.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan.data
+
+          import android.app.Application
+          import android.content.Context
+          import androidx.compose.runtime.getValue
+          import androidx.compose.runtime.mutableFloatStateOf
+          import androidx.compose.runtime.mutableIntStateOf
+          import androidx.compose.runtime.mutableStateOf
+          import androidx.compose.runtime.setValue
+          import androidx.lifecycle.AndroidViewModel
+          import com.prabhu.divyadarshan.reminder.ReminderScheduler
+
+          /** Local-only preferences (no login, no backend). */
+          class AppViewModel(app: Application) : AndroidViewModel(app) {
+              private val sp = app.getSharedPreferences("prefs", Context.MODE_PRIVATE)
+
+              var lang by mutableStateOf(runCatching { Lang.valueOf(sp.getString("lang", "MR")!!) }.getOrDefault(Lang.MR))
+                  private set
+              var fontScale by mutableFloatStateOf(sp.getFloat("fs", 1f))
+                  private set
+              var favorites by mutableStateOf(sp.getStringSet("fav", emptySet())?.toSet() ?: emptySet())
+                  private set
+              var remindOn by mutableStateOf(sp.getBoolean("rOn", false))
+                  private set
+              var remindHour by mutableIntStateOf(sp.getInt("rH", 6))
+                  private set
+              var remindMinute by mutableIntStateOf(sp.getInt("rM", 0))
+                  private set
+              var city by mutableStateOf(sp.getString("city", "Pune") ?: "Pune")
+                  private set
+
+              init { if (remindOn) ReminderScheduler.schedule(app, remindHour, remindMinute) }
+
+              fun setLang(l: Lang) { lang = l; sp.edit().putString("lang", l.name).apply() }
+              fun setFontScale(s: Float) { fontScale = s; sp.edit().putFloat("fs", s).apply() }
+              fun setCity(c: String) { city = c; sp.edit().putString("city", c).apply() }
+
+              fun toggleFavorite(id: String) {
+                  favorites = if (id in favorites) favorites - id else favorites + id
+                  sp.edit().putStringSet("fav", favorites).apply()
+              }
+
+              fun setReminder(on: Boolean, h: Int, m: Int) {
+                  remindOn = on; remindHour = h; remindMinute = m
+                  sp.edit().putBoolean("rOn", on).putInt("rH", h).putInt("rM", m).apply()
+                  val app = getApplication<Application>()
+                  if (on) ReminderScheduler.schedule(app, h, m) else ReminderScheduler.cancel(app)
+              }
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan/data"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/data/Content.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan.data
+
+          object Content {
+              val weekdays = listOf(Bi("सोमवार"), Bi("मंगळवार", "मंगलवार"), Bi("बुधवार"), Bi("गुरुवार"),
+                  Bi("शुक्रवार"), Bi("शनिवार"), Bi("रविवार"))
+              val months = listOf(Bi("जानेवारी", "जनवरी"), Bi("फेब्रुवारी", "फ़रवरी"), Bi("मार्च"), Bi("एप्रिल", "अप्रैल"),
+                  Bi("मे", "मई"), Bi("जून"), Bi("जुलै", "जुलाई"), Bi("ऑगस्ट", "अगस्त"), Bi("सप्टेंबर", "सितंबर"),
+                  Bi("ऑक्टोबर", "अक्टूबर"), Bi("नोव्हेंबर", "नवंबर"), Bi("डिसेंबर", "दिसंबर"))
+
+              val dailyMessages = listOf(
+                  Bi("आजचा दिवस श्रद्धा आणि शांततेने सुरू करा.", "आज का दिन श्रद्धा और शांति से आरंभ करें।"),
+                  Bi("कृतज्ञतेने केलेली छोटी प्रार्थनाही मनाला शांती देते.", "कृतज्ञता से की गई छोटी प्रार्थना भी मन को शांति देती है।"),
+                  Bi("सेवा आणि सद्भाव हीच खरी पूजा.", "सेवा और सद्भाव ही सच्ची पूजा है।"),
+                  Bi("दीप लावा, मन उजळू द्या.", "दीप जलाइए, मन को प्रकाशित होने दीजिए।"),
+                  Bi("आज एखाद्याला मदत करून दिवस सार्थक करा.", "आज किसी की सहायता कर दिन को सार्थक बनाइए।"),
+                  Bi("नामस्मरणाने मन स्थिर होते.", "नाम-स्मरण से मन स्थिर होता है।"),
+                  Bi("आई-वडिलांचे आशीर्वाद घेऊन दिवसाची सुरुवात करा.", "माता-पिता का आशीर्वाद लेकर दिन की शुरुआत करें।"))
+
+              val deities = listOf(
+                  Deity("ganpati", Bi("श्री गणपती", "श्री गणेश"), Bi("विघ्नहर्ता"), "गं"),
+                  Deity("shiva", Bi("भगवान शिव"), Bi("महादेव"), "ॐ"),
+                  Deity("vishnu", Bi("भगवान विष्णू", "भगवान विष्णु"), Bi("जगत्पालक", "जगत्पालक"), "वि"),
+                  Deity("krishna", Bi("श्रीकृष्ण"), Bi("गोपाळ", "गोपाल"), "कृ"),
+                  Deity("durga", Bi("देवी दुर्गा"), Bi("आदिशक्ती", "आदिशक्ति"), "दु"),
+                  Deity("hanuman", Bi("हनुमान"), Bi("बजरंगबली"), "हं"))
+              fun deity(id: String) = deities.firstOrNull { it.id == id }
+
+              // Mantras have bundled text (assets/lyrics/<id>.txt). Aarti entries are titles only: add verified
+              // lyrics as assets/lyrics/<id>.txt to make them appear. No lyrics are invented here.
+              val items = listOf(
+                  Item("a_ganpati", "ganpati", true, Bi("सुखकर्ता दुःखहर्ता", "जय गणेश देवा"), "ganesh"),
+                  Item("m_ganpati", "ganpati", false, Bi("गणपती मंत्र", "गणेश मंत्र"), "ganesh"),
+                  Item("a_shiva", "shiva", true, Bi("लवथवती विक्राळा", "ॐ जय शिव ओंकारा"), "shivratri"),
+                  Item("m_shiva", "shiva", false, Bi("पंचाक्षरी मंत्र"), "shivratri"),
+                  Item("a_vishnu", "vishnu", true, Bi("ॐ जय जगदीश हरे")),
+                  Item("m_vishnu", "vishnu", false, Bi("द्वादशाक्षर मंत्र")),
+                  Item("a_krishna", "krishna", true, Bi("आरती कुंजबिहारी की"), "janmashtami"),
+                  Item("m_krishna", "krishna", false, Bi("हरे कृष्ण महामंत्र"), "janmashtami"),
+                  Item("a_durga", "durga", true, Bi("दुर्गे दुर्घट भारी", "जय अम्बे गौरी"), "navratri"),
+                  Item("m_durga", "durga", false, Bi("दुर्गा मंत्र"), "navratri"),
+                  Item("a_hanuman", "hanuman", true, Bi("सत्राणे उड्डाणे हुंकार वदनी", "आरती कीजै हनुमान लला की"), "hanuman"),
+                  Item("m_hanuman", "hanuman", false, Bi("हनुमान मंत्र"), "hanuman"))
+              fun item(id: String) = items.firstOrNull { it.id == id }
+
+              val festivals = listOf(
+                  Festival("ganesh", Bi("गणेश चतुर्थी"),
+                      Bi("भगवान गणेशाच्या जन्मोत्सवाचा सण; घरोघरी आणि मंडपांत गणपतीची स्थापना करून विघ्नहर्त्याची पूजा केली जाते.",
+                          "भगवान गणेश के जन्मोत्सव का पर्व; घरों और पंडालों में प्रतिमा स्थापित कर विघ्नहर्ता की पूजा की जाती है।"),
+                      Bi("२१ दुर्वा आणि मोदकाचा नैवेद्य अर्पण करण्याची परंपरा आहे.", "२१ दूर्वा और मोदक का भोग अर्पित करने की परंपरा है।"), "ganpati"),
+                  Festival("navratri", Bi("नवरात्री", "नवरात्रि"),
+                      Bi("नऊ रात्री देवी दुर्गेच्या नऊ रूपांची उपासना केली जाते.", "नौ रातों तक देवी दुर्गा के नौ स्वरूपों की उपासना की जाती है।"),
+                      Bi("घटस्थापना करून नऊ दिवस देवीची पूजा केली जाते.", "घटस्थापना कर नौ दिन देवी की पूजा की जाती है।"), "durga"),
+                  Festival("diwali", Bi("दिवाळी", "दीपावली"),
+                      Bi("दीपांचा उत्सव; अंधारावर प्रकाशाचा आणि अज्ञानावर ज्ञानाचा विजय मानला जातो.", "दीपों का उत्सव; अंधकार पर प्रकाश और अज्ञान पर ज्ञान की विजय का प्रतीक है।"),
+                      Bi("लक्ष्मीपूजनाच्या दिवशी दिवे लावून लक्ष्मी-गणेशाची पूजा करतात.", "लक्ष्मी पूजन पर दीप जलाकर लक्ष्मी-गणेश की पूजा करते हैं।"), null),
+                  Festival("shivratri", Bi("महाशिवरात्री", "महाशिवरात्रि"),
+                      Bi("भगवान शिवाची रात्र; उपवास, जागरण आणि अभिषेकाने उपासना केली जाते.", "भगवान शिव की रात्रि; उपवास, जागरण और अभिषेक से उपासना की जाती है।"),
+                      Bi("शिवलिंगावर जल/दूध अभिषेक करून बेलपत्र अर्पण करतात.", "शिवलिंग पर जल/दूध से अभिषेक कर बेलपत्र अर्पित करते हैं।"), "shiva"),
+                  Festival("janmashtami", Bi("जन्माष्टमी"),
+                      Bi("श्रीकृष्णाचा जन्मोत्सव; उपवास, भजन आणि मध्यरात्री जन्म साजरा केला जातो.", "श्रीकृष्ण का जन्मोत्सव; उपवास, भजन और मध्यरात्रि में जन्म मनाया जाता है।"),
+                      Bi("बालकृष्णाला लोणी-साखरेचा नैवेद्य दाखवतात.", "बालकृष्ण को माखन-मिश्री का भोग लगाते हैं।"), "krishna"),
+                  Festival("ramnavami", Bi("राम नवमी"),
+                      Bi("भगवान श्रीरामाचा जन्मोत्सव; रामायण पठण व पूजन केले जाते.", "भगवान श्रीराम का जन्मोत्सव; रामायण पाठ और पूजन किया जाता है।"),
+                      Bi("रामरक्षा किंवा रामायण पठण करून रामाचे पूजन करतात.", "रामरक्षा या रामायण पाठ कर श्रीराम का पूजन करते हैं।"), "vishnu"),
+                  Festival("hanuman", Bi("हनुमान जयंती"),
+                      Bi("हनुमानाचा जन्मोत्सव; हनुमान चालीसा पठण व पूजन केले जाते.", "हनुमान जी का जन्मोत्सव; हनुमान चालीसा पाठ और पूजन किया जाता है।"),
+                      Bi("शेंदूर आणि फुले अर्पण करून चालीसा पठण करतात.", "सिंदूर और पुष्प अर्पित कर चालीसा पाठ करते हैं।"), "hanuman"))
+              fun festival(id: String) = festivals.firstOrNull { it.id == id }
+              fun festivalName(id: String?) = festivals.firstOrNull { it.id == id }?.name
+
+              val commonSteps = listOf(
+                  Bi("स्वच्छता व संकल्प", "स्वच्छता व संकल्प") to Bi("पूजास्थान स्वच्छ करा, स्नान करून शुद्ध वस्त्रे घाला आणि पूजेचा संकल्प करा.", "पूजास्थान साफ करें, स्नान कर शुद्ध वस्त्र पहनें और पूजा का संकल्प करें।"),
+                  Bi("दीप प्रज्वलन", "दीप प्रज्वलन") to Bi("दिवा लावा आणि देवतेचे स्मरण करा.", "दीपक जलाएँ और देवता का स्मरण करें।"),
+                  Bi("आवाहन व आसन", "आवाहन व आसन") to Bi("मूर्ती/प्रतिमा स्थापन करून देवतेला आसन द्या.", "मूर्ति/प्रतिमा स्थापित कर देवता को आसन दें।"),
+                  Bi("गंध, फुले, धूप", "गंध, पुष्प, धूप") to Bi("गंध, फुले, अक्षता आणि धूप अर्पण करा.", "गंध, पुष्प, अक्षत और धूप अर्पित करें।"),
+                  Bi("नैवेद्य", "नैवेद्य") to Bi("घरी तयार केलेला नैवेद्य अर्पण करा.", "घर पर बना भोग अर्पित करें।"),
+                  Bi("मंत्र व आरती", "मंत्र व आरती") to Bi("मंत्रजप करा, आरती म्हणा आणि घंटा वाजवा.", "मंत्र जप करें, आरती गाएँ और घंटी बजाएँ।"),
+                  Bi("प्रार्थना व प्रसाद", "प्रार्थना व प्रसाद") to Bi("क्षमायाचना करून प्रार्थना करा आणि प्रसाद वाटा.", "क्षमा-याचना कर प्रार्थना करें और प्रसाद बाँटें।"))
+
+              val zodiac = listOf(
+                  Zodiac(Bi("मेष"), "♈"), Zodiac(Bi("वृषभ"), "♉"), Zodiac(Bi("मिथुन"), "♊"), Zodiac(Bi("कर्क"), "♋"),
+                  Zodiac(Bi("सिंह"), "♌"), Zodiac(Bi("कन्या"), "♍"), Zodiac(Bi("तुला"), "♎"), Zodiac(Bi("वृश्चिक"), "♏"),
+                  Zodiac(Bi("धनु"), "♐"), Zodiac(Bi("मकर"), "♑"), Zodiac(Bi("कुंभ"), "♒"), Zodiac(Bi("मीन"), "♓"))
+
+              val cities = listOf("Mumbai", "Pune", "Nashik", "Nagpur", "Delhi", "Varanasi", "Ujjain", "Kolkata", "Chennai", "Ahmedabad")
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan/data"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/data/Models.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan.data
+
+          /** Add SA("संस्कृतम्") / EN("English") here later and extend Bi with the new fields. */
+          enum class Lang(val label: String) { MR("मराठी"), HI("हिन्दी") }
+
+          data class Bi(val mr: String, val hi: String = mr) {
+              fun get(l: Lang) = if (l == Lang.MR) mr else hi
+          }
+
+          data class Deity(val id: String, val name: Bi, val tagline: Bi, val glyph: String)
+          data class Item(val id: String, val deityId: String, val isAarti: Boolean, val title: Bi, val festivalId: String? = null)
+          data class Festival(val id: String, val name: Bi, val significance: Bi, val special: Bi, val deityId: String?)
+          data class Zodiac(val name: Bi, val symbol: String)
+          PDD_EOF_7
+          mkdir -p "app/src/main/java/com/prabhu/divyadarshan/data"
+          cat > 'app/src/main/java/com/prabhu/divyadarshan/data/PanchangSource.kt' <<'PDD_EOF_7'
+          package com.prabhu.divyadarshan.data
+
+          import java.time.LocalDate
+
+          data class PanchangData(
+              val tithi: String?, val nakshatra: String?, val yoga: String?, val karana: String?,
+              val sunrise: String?, val sunset: String?, val isSample: Boolean
+          )
+
+          /** Plug a verified calculation library or offline table in here. */
+          interface PanchangSource { fun forDate(date: LocalDate, city: String): PanchangData }
+
+          /** Returns no values on purpose: nothing is fabricated until a real source is connected. */
+          object SamplePanchangSource : PanchangSource {
+              override fun forDate(date: LocalDate, city: String) =
+                  PanchangData(null, null, null, null, null, null, isSample = true)
+          }
+          PDD_EOF_7
+          mkdir -p "app/src/main/assets/lyrics"
+          cat > 'app/src/main/assets/lyrics/m_durga.txt' <<'PDD_EOF_7'
+          ॐ दुं दुर्गायै नमः ॥
+          PDD_EOF_7
+          mkdir -p "app/src/main/assets/lyrics"
+          cat > 'app/src/main/assets/lyrics/m_ganpati.txt' <<'PDD_EOF_7'
+          ॐ गं गणपतये नमः ॥
+          PDD_EOF_7
+          mkdir -p "app/src/main/assets/lyrics"
+          cat > 'app/src/main/assets/lyrics/m_hanuman.txt' <<'PDD_EOF_7'
+          ॐ हनुमते नमः ॥
+          PDD_EOF_7
+          mkdir -p "app/src/main/assets/lyrics"
+          cat > 'app/src/main/assets/lyrics/m_krishna.txt' <<'PDD_EOF_7'
+          हरे कृष्ण हरे कृष्ण कृष्ण कृष्ण हरे हरे ।
+          हरे राम हरे राम राम राम हरे हरे ॥
+          PDD_EOF_7
+          mkdir -p "app/src/main/assets/lyrics"
+          cat > 'app/src/main/assets/lyrics/m_shiva.txt' <<'PDD_EOF_7'
+          ॐ नमः शिवाय ॥
+          PDD_EOF_7
+          mkdir -p "app/src/main/assets/lyrics"
+          cat > 'app/src/main/assets/lyrics/m_vishnu.txt' <<'PDD_EOF_7'
+          ॐ नमो भगवते वासुदेवाय ॥
+          PDD_EOF_7
+          mkdir -p "app/src/main/res/values"
+          cat > 'app/src/main/res/values/strings.xml' <<'PDD_EOF_7'
+          <resources><string name="app_name">PRABHU DIVYA DARSHAN</string></resources>
+          PDD_EOF_7
+          mkdir -p "app/src/main/res/values"
+          cat > 'app/src/main/res/values/themes.xml' <<'PDD_EOF_7'
+          <resources>
+              <color name="cream">#FFF8E7</color>
+              <color name="maroon">#6D1A1A</color>
+              <style name="Theme.App" parent="android:Theme.Material.Light.NoActionBar">
+                  <item name="android:windowBackground">@color/cream</item>
+                  <item name="android:statusBarColor">@color/maroon</item>
+                  <item name="android:navigationBarColor">@color/maroon</item>
+              </style>
+          </resources>
+          PDD_EOF_7
+          mkdir -p "app/src/main/res/drawable"
+          cat > 'app/src/main/res/drawable/ic_launcher.xml' <<'PDD_EOF_7'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="96dp" android:height="96dp" android:viewportWidth="96" android:viewportHeight="96">
+              <path android:fillColor="#6D1A1A" android:pathData="M0,0h96v96h-96z"/>
+              <path android:fillColor="#D4AF37" android:pathData="M48,18 C58,34 66,42 66,54 A18,18 0 0 1 30,54 C30,42 38,34 48,18 Z"/>
+              <path android:fillColor="#FF9933" android:pathData="M48,40 C53,48 57,52 57,58 A9,9 0 0 1 39,58 C39,52 43,48 48,40 Z"/>
+              <path android:fillColor="#D4AF37" android:pathData="M24,76 h48 l-6,10 h-36 z"/>
+          </vector>
+          PDD_EOF_7
+          mkdir -p "app/src/main/res/drawable"
+          cat > 'app/src/main/res/drawable/ic_notif.xml' <<'PDD_EOF_7'
+          <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+              <path android:fillColor="#FFFFFF" android:pathData="M12,2 C15,7 18,10 18,14 A6,6 0 0 1 6,14 C6,10 9,7 12,2 Z"/>
+          </vector>
+          PDD_EOF_7
+          mkdir -p "gradle/wrapper"
+          cat > 'gradle/wrapper/gradle-wrapper.properties' <<'PDD_EOF_7'
+          distributionBase=GRADLE_USER_HOME
+          distributionPath=wrapper/dists
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.9-bin.zip
+          zipStoreBase=GRADLE_USER_HOME
+          zipStorePath=wrapper/dists
+          PDD_EOF_7
+          mkdir -p app/src/main/res/raw
+          python3 - <<'PYGEN'
+          import wave, math, struct
+          SR=22050
+          def save(name, data):
+              m=max(abs(x) for x in data) or 1
+              with wave.open(f"app/src/main/res/raw/{name}.wav","wb") as w:
+                  w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR)
+                  w.writeframes(b"".join(struct.pack("<h",int(x/m*0.8*32767)) for x in data))
+          N=int(SR*3.5); d=[]
+          parts=[(1,1.0,1.2),(2.0,0.6,1.6),(2.76,0.5,2.0),(5.4,0.3,3.0),(8.93,0.2,4.0)]
+          for i in range(N):
+              t=i/SR; a=min(1,t/0.004)
+              d.append(a*sum(A*math.exp(-k*t)*math.sin(2*math.pi*520*f*t) for f,A,k in parts))
+          save("bell",d)
+          d=[]
+          for i in range(N):
+              t=i/SR; env=min(1,t/0.5)*min(1,(3.5-t)/0.8)
+              f=233+2*math.sin(2*math.pi*4.5*t)
+              d.append(env*sum(A*math.sin(2*math.pi*f*h*t) for h,A in [(1,1),(2,.6),(3,.45),(4,.25),(5,.12)]))
+          save("conch",d)
+          N=SR*8; d=[]
+          for i in range(N):
+              t=i/SR; lfo=0.8+0.2*math.sin(2*math.pi*0.25*t)
+              s=0
+              for f,A in [(131,1),(196,.7),(262,.5),(393,.25)]:
+                  s+=A*(math.sin(2*math.pi*f*t)+.4*math.sin(2*math.pi*2*f*t))
+              d.append(s*lfo)
+          save("ambient",d)
+          PYGEN
+      - name: Build
+        run: cd PDD && gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: PDD/app/build/outputs/apk/debug/app-debug.apk
